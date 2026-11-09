@@ -9,6 +9,7 @@ def configure_logging() -> None:
 
     logging.basicConfig(
         filename=str(LOG_FILE),
-        level=logging.INFO,
-        force=True,
+        level=logging.DEBUG,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        force=False,
     )
