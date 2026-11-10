@@ -2,7 +2,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-LOG_FILE = Path(__file__).resolve().parents[2] / "logs" / "app.log"
+LOG_FILE = Path.cwd() / "logs" / "app.log"
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 
