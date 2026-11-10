@@ -1,19 +1,19 @@
 # API Logging Project
 
-A learning project demonstrating a FastAPI application with input validation, structured rotating file logs, and Docker deployment.
+A learning project demonstrating a FastAPI application with input validation, structured rotating file logs, PostgreSQL persistence, and Docker.
 
 ## Features
 
 - `GET /health` health check endpoint.
-- `POST /items` creates an item and returns its ID.
-- `PUT /items/{item_id}` updates an existing item.
-- `DELETE /items/{item_id}` deletes an existing item.
+- `GET /items` returns all items stored in PostgreSQL.
+- `POST /items` creates an item in PostgreSQL and returns its ID.
+- `PUT /items/{item_id}` updates an item in PostgreSQL.
+- `DELETE /items/{item_id}` deletes an item from PostgreSQL.
 - Request validation with Pydantic.
-- Validation failures are returned as HTTP `422` responses and recorded as `WARNING` logs.
-- Successful item operations are recorded in a rotating log file.
-- Docker image built with Python and dependencies managed by `uv`.
-
-> Items are stored in application memory for learning purposes. They are cleared when the application restarts.
+- Validation failures return HTTP `422` responses and are recorded as `WARNING` logs.
+- Item changes and health checks are recorded in a rotating log file.
+- PostgreSQL runs in a Docker container with a named volume for persistent data.
+- Python dependencies are managed by `uv`.
 
 ## Project Structure
 
@@ -26,67 +26,102 @@ api-logging-project/
 ├── README.md
 ├── pyproject.toml
 ├── uv.lock
+├── sql/
+│   └── schema.sql
 ├── logs/
 │   └── app.log
 └── src/
     └── api_logging_project/
         ├── __init__.py
+        ├── database.py
         ├── logging_config.py
         └── main.py
 ```
 
 - `src/api_logging_project/main.py` defines the FastAPI app, endpoints, input model, and validation error handler.
+- `src/api_logging_project/database.py` creates PostgreSQL connections using the `DATABASE_URL` environment variable.
 - `src/api_logging_project/logging_config.py` configures the application logger and rotating log file.
+- `sql/schema.sql` defines the PostgreSQL `items` table.
 - `pyproject.toml` defines the project and its dependencies.
 - `uv.lock` records the exact dependency versions used by `uv`.
-- `Dockerfile` describes how to build and run the app inside a Docker image.
-- `.dockerignore` lists files that Docker should leave out of the build.
-- `.gitignore` lists generated and local files that Git should not track.
-- `.python-version` records the Python version selected for the project.
-- `logs/app.log` is generated at runtime. It is kept in the project folder and is not included in the Docker image.
+- `Dockerfile` describes how to build the application image.
+- `.dockerignore` lists files Docker should leave out of the image.
+- `.gitignore` lists generated and local files Git should not track.
+- `logs/app.log` is generated at runtime and is not included in the Docker image.
 
-## Logging
+## Run the API with PostgreSQL
 
-The application writes logs to `logs/app.log` using UTF-8 encoding. Log entries include the timestamp, level, logger name, and message. The rotating file handler starts a new log file when the current file reaches approximately 1 MB and keeps up to three backup files.
+In this development setup, PostgreSQL runs in Docker and the FastAPI application runs locally from PowerShell.
 
-Examples of logged events include successful item creation, updates, deletions, health checks, and request validation failures.
+Run the following commands from the project folder.
 
-## Run with Docker
+### Start PostgreSQL
 
-Run these commands in PowerShell from the project folder.
-
-Build the image:
+Download the PostgreSQL image:
 
 ```powershell
-docker build -t api-logging-project .
+docker pull postgres:17
 ```
 
-Start the container and mount the project's `logs` folder so that logs appear on the host:
+Create and start the PostgreSQL container:
 
 ```powershell
-docker run -d --name api-logging-container -p 127.0.0.1:8000:8000 --mount "type=bind,source=$($PWD.Path)\logs,target=/app/logs" api-logging-project:latest
+docker run --name postgres-db -e POSTGRES_USER=app_user -e POSTGRES_PASSWORD=dev_password_change_me -e POSTGRES_DB=api_logging -p 127.0.0.1:5432:5432 -v pgdata:/var/lib/postgresql/data -d postgres:17
+```
+
+The `pgdata` Docker volume keeps database data when the container is stopped. The example password is for local development. Use the same password in the `DATABASE_URL` below.
+
+If you already created the container, start it with:
+
+```powershell
+docker start postgres-db
 ```
 
 Check that the container is running:
 
 ```powershell
-docker ps
+docker ps --filter name=postgres-db
 ```
+
+### Create the database table
+
+Apply the schema from the project folder:
+
+```powershell
+Get-Content .\sql\schema.sql | docker exec -i postgres-db psql -U app_user -d api_logging
+```
+
+The schema creates an `items` table with an automatically generated ID, a name, a positive price with two decimal places, and a non-negative quantity.
+
+### Configure the API connection
+
+Set the connection string in the same PowerShell window that you will use to run the API:
+
+```powershell
+$env:DATABASE_URL = "postgresql://app_user:dev_password_change_me@localhost:5432/api_logging"
+```
+
+If you open a new PowerShell window, set `DATABASE_URL` again in that window.
+
+Install the project dependencies:
+
+```powershell
+uv sync
+```
+
+Start the API:
+
+```powershell
+uv run uvicorn api_logging_project.main:app --reload
+```
+
+Keep this PowerShell window open while using the API.
 
 Open Swagger UI:
 
 ```text
 http://127.0.0.1:8000/docs
 ```
-
-Stop and remove the container:
-
-```powershell
-docker stop api-logging-container
-docker rm api-logging-container
-```
-
-Stopping and removing the container does not remove `logs/app.log` from the project folder because the log folder is mounted from the host.
 
 ## Test the API in Swagger
 
@@ -99,12 +134,16 @@ Use `POST /items` with this JSON body:
 ```json
 {
   "name": "Notebook",
-  "price": 25.5,
+  "price": 25.50,
   "quantity": 10
 }
 ```
 
-A successful response has HTTP status `201`. It includes the new item's `id`; use that ID in the update and delete requests.
+A successful response has HTTP status `201` and includes the new item's ID.
+
+### Read items
+
+Use `GET /items` to read all items stored in PostgreSQL. The item created by `POST /items` should appear in the response.
 
 ### Update an item
 
@@ -113,7 +152,7 @@ Use `PUT /items/{item_id}`. Enter the ID returned by `POST /items` and provide a
 ```json
 {
   "name": "Updated Notebook",
-  "price": 30,
+  "price": 30.00,
   "quantity": 8
 }
 ```
@@ -131,19 +170,55 @@ Try `POST /items` with an invalid body, for example:
 ```json
 {
   "name": "",
-  "price": 15000,
-  "quantity": 5
+  "price": 0,
+  "quantity": -1
 }
 ```
 
-The empty name violates the minimum length rule, so the API returns HTTP `422`. The validation failure is also recorded as a `WARNING` in `logs/app.log`.
-
-The item fields have these rules:
+The API returns HTTP `422` when a value fails validation. The rules are:
 
 - `name`: 1 to 50 characters.
-- `price`: greater than zero.
+- `price`: greater than zero, with at most two decimal places.
 - `quantity`: zero or greater.
+
+Validation failures are also recorded as `WARNING` entries in `logs/app.log`.
+
+## Verify data directly in PostgreSQL
+
+Connect to the database container:
+
+```powershell
+docker exec -it postgres-db psql -U app_user -d api_logging
+```
+
+List the stored items:
+
+```sql
+SELECT * FROM items;
+```
+
+Exit `psql`:
+
+```text
+\q
+```
 
 ## View the log file
 
 After making API requests, open `logs/app.log` in the project folder. It contains the application's recorded events.
+
+## Stop the services
+
+Stop the API with `Ctrl+C` in the PowerShell window running Uvicorn.
+
+Stop PostgreSQL while keeping its data:
+
+```powershell
+docker stop postgres-db
+```
+
+Start PostgreSQL again later with:
+
+```powershell
+docker start postgres-db
+```
