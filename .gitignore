@@ -1,4 +1,6 @@
 .venv/
 logs/
+temp_auto_push.bat
 __pycache__/
-*.py[cod]
+*.py[cod].gitignore
+branch_structure.json
