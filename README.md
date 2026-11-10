@@ -6,6 +6,7 @@ A learning project demonstrating a FastAPI application with input validation, st
 
 - `GET /health` health check endpoint.
 - `GET /items` returns all items stored in PostgreSQL.
+- `GET /items` caches its PostgreSQL results in Redis for 60 seconds.
 - `POST /items` creates an item in PostgreSQL and returns its ID.
 - `PUT /items/{item_id}` updates an item in PostgreSQL.
 - `DELETE /items/{item_id}` deletes an item from PostgreSQL.
@@ -14,6 +15,8 @@ A learning project demonstrating a FastAPI application with input validation, st
 - Item changes and health checks are recorded in a rotating log file.
 - PostgreSQL runs in a Docker container with a named volume for persistent data.
 - Python dependencies are managed by `uv`.
+- Item create, update, and delete operations invalidate the items cache.
+- Redis runs in a Docker container.
 
 ## Project Structure
 
@@ -34,6 +37,7 @@ api-logging-project/
     └── api_logging_project/
         ├── __init__.py
         ├── database.py
+        ├── cache.py
         ├── logging_config.py
         └── main.py
 ```
@@ -41,6 +45,7 @@ api-logging-project/
 - `src/api_logging_project/main.py` defines the FastAPI app, endpoints, input model, and validation error handler.
 - `src/api_logging_project/database.py` creates PostgreSQL connections using the `DATABASE_URL` environment variable.
 - `src/api_logging_project/logging_config.py` configures the application logger and rotating log file.
+- `src/api_logging_project/cache.py` connects to Redis and caches the items list for 60 seconds.
 - `sql/schema.sql` defines the PostgreSQL `items` table.
 - `pyproject.toml` defines the project and its dependencies.
 - `uv.lock` records the exact dependency versions used by `uv`.
@@ -203,6 +208,42 @@ Exit `psql`:
 \q
 ```
 
+### Start Redis
+
+Download the Redis image:
+
+```powershell
+docker pull redis
+```
+
+Create the container the first time:
+
+```powershell
+docker run -d --name redis-cache -p 127.0.0.1:6379:6379 redis
+```
+
+If the container already exists, start it with:
+
+```powershell
+docker start redis-cache
+```
+
+### Configure the Redis connection
+
+Set the connection URL in the same PowerShell window used to start the API:
+
+```powershell
+$env:REDIS_URL = "redis://localhost:6379/0"
+```
+
+`GET /items` reads from Redis when the cached list exists. On a cache miss, it reads from PostgreSQL and caches the list for 60 seconds. Creating, updating, or deleting an item clears the cached list.
+
+To inspect the cached list directly:
+
+```powershell
+docker exec -it redis-cache redis-cli GET items:all
+```
+
 ## View the log file
 
 After making API requests, open `logs/app.log` in the project folder. It contains the application's recorded events.
@@ -215,10 +256,13 @@ Stop PostgreSQL while keeping its data:
 
 ```powershell
 docker stop postgres-db
+docker stop redis-cache
 ```
+
 
 Start PostgreSQL again later with:
 
 ```powershell
 docker start postgres-db
+docker start redis-cache
 ```
