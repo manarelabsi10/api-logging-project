@@ -244,6 +244,50 @@ To inspect the cached list directly:
 docker exec -it redis-cache redis-cli GET items:all
 ```
 
+### Run the API in Docker
+
+The PostgreSQL and Redis containers must be running.
+
+Create a shared network and attach both containers once:
+
+```powershell
+docker network create api-logging-network
+docker network connect api-logging-network postgres-db
+docker network connect api-logging-network redis-cache
+```
+
+Build the API image:
+
+```powershell
+docker build -t api-logging-project:redis .
+```
+
+On first setup, create `.env` from the example and replace `YOUR_POSTGRES_PASSWORD` with the PostgreSQL password:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Run the API container:
+
+```powershell
+docker run -d --name api-logging-api --network api-logging-network --env-file .env -p 127.0.0.1:8000:8000 api-logging-project:redis
+```
+
+Check that the containers are running:
+
+```powershell
+docker ps
+```
+
+Open Swagger UI at `http://127.0.0.1:8000/docs`.
+
+Inspect the cached items in Redis:
+
+```powershell
+docker exec -it redis-cache redis-cli GET items:all
+```
+
 ## View the log file
 
 After making API requests, open `logs/app.log` in the project folder. It contains the application's recorded events.
@@ -257,6 +301,7 @@ Stop PostgreSQL while keeping its data:
 ```powershell
 docker stop postgres-db
 docker stop redis-cache
+docker stop api-logging-api
 ```
 
 
