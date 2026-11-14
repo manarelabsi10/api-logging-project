@@ -2,5 +2,6 @@
 logs/
 temp_auto_push.bat
 __pycache__/
-*.py[cod].gitignore
+*.py[cod]
 branch_structure.json
+.env
