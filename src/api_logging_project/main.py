@@ -1,9 +1,12 @@
+from decimal import Decimal
+
 from fastapi import FastAPI, HTTPException, Path, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .database import get_connection
 from .logging_config import configure_logging
 
 
@@ -18,13 +21,8 @@ app = FastAPI(
 
 class ItemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=50)
-    price: float = Field(gt=0)
+    price: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
     quantity: int = Field(ge=0)
-
-
-# تخزين مؤقت للعناصر أثناء تشغيل التطبيق
-items: dict[int, ItemCreate] = {}
-next_item_id = 1
 
 
 @app.exception_handler(RequestValidationError)
@@ -48,20 +46,34 @@ def health_check():
     return {"status": "ok"}
 
 
+@app.get("/items")
+def list_items():
+    with get_connection() as conn:
+        items = conn.execute(
+            "SELECT id, name, price, quantity FROM items ORDER BY id"
+        ).fetchall()
+
+    return {"items": items}
+
+
 @app.post("/items", status_code=201)
 def create_item(item: ItemCreate):
-    global next_item_id
+    with get_connection() as conn:
+        saved_item = conn.execute(
+            """
+            INSERT INTO items (name, price, quantity)
+            VALUES (%s, %s, %s)
+            RETURNING id, name, price, quantity
+            """,
+            (item.name, item.price, item.quantity),
+        ).fetchone()
 
-    item_id = next_item_id
-    items[item_id] = item
-    next_item_id += 1
-
-    logger.info("Item created: %s (id=%d)", item.name, item_id)
+    logger.info("Item created: %s (id=%d)", item.name, saved_item["id"])
 
     return {
         "message": "Item created successfully",
-        "id": item_id,
-        "item": item,
+        "id": saved_item["id"],
+        "item": saved_item,
     }
 
 
@@ -70,28 +82,47 @@ def update_item(
     item: ItemCreate,
     item_id: int = Path(gt=0),
 ):
-    if item_id not in items:
+    with get_connection() as conn:
+        updated_item = conn.execute(
+            """
+            UPDATE items
+            SET name = %s, price = %s, quantity = %s
+            WHERE id = %s
+            RETURNING id, name, price, quantity
+            """,
+            (item.name, item.price, item.quantity, item_id),
+        ).fetchone()
+
+    if updated_item is None:
         logger.warning("Update failed: item not found (id=%d)", item_id)
         raise HTTPException(status_code=404, detail="Item not found")
 
-    items[item_id] = item
     logger.info("Item updated: %s (id=%d)", item.name, item_id)
 
     return {
         "message": "Item updated successfully",
         "id": item_id,
-        "item": item,
+        "item": updated_item,
     }
 
 
 @app.delete("/items/{item_id}")
 def delete_item(item_id: int = Path(gt=0)):
-    if item_id not in items:
+    with get_connection() as conn:
+        deleted_item = conn.execute(
+            """
+            DELETE FROM items
+            WHERE id = %s
+            RETURNING id, name, price, quantity
+            """,
+            (item_id,),
+        ).fetchone()
+
+    if deleted_item is None:
         logger.warning("Delete failed: item not found (id=%d)", item_id)
         raise HTTPException(status_code=404, detail="Item not found")
 
-    deleted_item = items.pop(item_id)
-    logger.info("Item deleted: %s (id=%d)", deleted_item.name, item_id)
+    logger.info("Item deleted: %s (id=%d)", deleted_item["name"], item_id)
 
     return {
         "message": "Item deleted successfully",
