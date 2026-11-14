@@ -4,4 +4,5 @@ temp_auto_push.bat
 __pycache__/
 *.py[cod]
 branch_structure.json
-.env
+config.bat
+node_modules
