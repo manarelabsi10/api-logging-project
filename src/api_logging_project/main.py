@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .cache import cache_items, get_cached_items, invalidate_items_cache
 from .database import get_connection
 from .logging_config import configure_logging
 
@@ -48,10 +49,19 @@ def health_check():
 
 @app.get("/items")
 def list_items():
+    cached_items = get_cached_items()
+
+    if cached_items is not None:
+        logger.info("Items returned from Redis cache")
+        return {"items": cached_items}
+
     with get_connection() as conn:
         items = conn.execute(
             "SELECT id, name, price, quantity FROM items ORDER BY id"
         ).fetchall()
+
+    cache_items(items)
+    logger.info("Items fetched from PostgreSQL and cached")
 
     return {"items": items}
 
@@ -67,6 +77,8 @@ def create_item(item: ItemCreate):
             """,
             (item.name, item.price, item.quantity),
         ).fetchone()
+
+    invalidate_items_cache()
 
     logger.info("Item created: %s (id=%d)", item.name, saved_item["id"])
 
@@ -97,6 +109,8 @@ def update_item(
         logger.warning("Update failed: item not found (id=%d)", item_id)
         raise HTTPException(status_code=404, detail="Item not found")
 
+    invalidate_items_cache()
+
     logger.info("Item updated: %s (id=%d)", item.name, item_id)
 
     return {
@@ -121,6 +135,8 @@ def delete_item(item_id: int = Path(gt=0)):
     if deleted_item is None:
         logger.warning("Delete failed: item not found (id=%d)", item_id)
         raise HTTPException(status_code=404, detail="Item not found")
+
+    invalidate_items_cache()
 
     logger.info("Item deleted: %s (id=%d)", deleted_item["name"], item_id)
 
